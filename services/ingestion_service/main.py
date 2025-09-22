@@ -1,9 +1,21 @@
 import shutil
+import sys
+import os
 from pathlib import Path
 from fastapi import FastAPI, File, UploadFile
 
+# --- Path setup ---
+CURRENT_FILE_PATH = Path(__file__).resolve()
+PROJECT_ROOT = CURRENT_FILE_PATH.parent.parent.parent
+SRC_PATH = PROJECT_ROOT / "src"
+sys.path.insert(0, str(SRC_PATH))
+
 # -- config --
-TEMP_UPLOADS_DIR = Path("../../temp_uploads")
+TEMP_UPLOADS_PATH_STR = os.environ.get(
+    "TEMP_UPLOADS_DIR",
+    str(PROJECT_ROOT / "temp_uploads")
+)
+TEMP_UPLOADS_DIR = Path(TEMP_UPLOADS_PATH_STR)
 TEMP_UPLOADS_DIR.mkdir(exist_ok=True)
 
 app = FastAPI(title="SLPH Ingestion Service")
@@ -42,4 +54,5 @@ async def upload_file(file: UploadFile = File(...)):
         return {"filename": file.filename, "status": "received"}
 
     finally:
+        # close uploaded file stream to free up resources.
         file.file.close()
