@@ -1,0 +1,41 @@
+
+services:
+  # MongoDB: db for storing structured metadata (JSON output from parsers.)
+  mongodb:
+    image: mongo:latest
+    container_name: slph_mongodb
+    ports:
+      - "27017:27017" # Expose mongodb on std port to host machine
+    volumes:
+      - mongodb_data:/data/db # ensures db data persists even if container is removed
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  minio:
+    image: minio/minio:latest
+    container_name: slph_minio
+    ports:
+      - "9000:9000" # port for API the application will talk to
+      - "9001:9001" # port for web-based ui
+    environment:
+      # REMINDER: DO NOT USE THESE IN PRODUCTION ENVIRONMENTS.
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data # this ensures our stored files persist
+
+    # This cmd starts the MinIO server and tells to run the web console on port 9001
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mongodb_data:
+  minio_data:
