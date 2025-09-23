@@ -1,7 +1,8 @@
 import sys
 from scapy.all import rdpcap, TCP, UDP, Raw
+from typing import List, Dict
 
-def extract_payloads(pcap_path):
+def extract_payloads(pcap_path: str) -> List[Dict[str, str]]:
     """ Parses a PCAP file and extracts application-layer payloads from TCP
         and UDP packets.
 
@@ -30,9 +31,13 @@ def extract_payloads(pcap_path):
             # payload is the data that comes after TCP/UDP header.
             if packet.haslayer(Raw):
                 # extract raw bytes of the payload.
-                payload = packet[Raw].load
-                if payload:
-                    payloads.append(payload)
+                payload_bytes = packet[Raw].load
+                if payload_bytes:
+                    decoded_string = payload_bytes.decode('utf-8', errors='ignore')
+                    payloads.append({
+                        "payload_hex": payload_bytes.hex(),
+                        "payload_string": decoded_string
+                    })
     
     return payloads
 
@@ -52,15 +57,14 @@ def main():
     if not extracted_payloads:
         print("[!] No application-layer payloads found or file could not be read.")
         return
+    
     print(f"\n[*] Found {len(extracted_payloads)} payloads.\n")
 
-    for i, payload in enumerate(extracted_payloads):
-        print(f"--- Payload {i+1} ({len(payload)} bytes) ---")
-        try:
-            print(payload.decode('utf-8', errors='ignore'))
-        except Exception:
-            print(payload)
-        print("-" * (len(f"--- Payload {i+1} ({len(payload)} bytes) ---")) + "\n")
+    for i, payload_data in enumerate(extracted_payloads):
+        payload_len = len(bytes.fromhex(payload_data['payload_hex']))
+        print(f"--- Payload {i+1} ({payload_len} bytes) ---")
+        print(payload_data['payload_string'])
+        print("-" * (len(f"--- Payload {i+1} ({payload_len} bytes) ---")) + "\n")
     
 if __name__ == "__main__":
     main()
