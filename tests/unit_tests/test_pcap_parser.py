@@ -46,10 +46,12 @@ class TestPcapParser(unittest.TestCase):
     
     def test_successful_extraction(self):
         result = extract_payloads(self.valid_pcap_path)
+        result_strings = [item['payload_string'] for item in result]
 
         self.assertEqual(len(result), 2)
-        self.assertIn(self.payload1, result)
-        self.assertIn(self.payload2, result)
+        self.assertIn(self.payload1.decode(), result_strings)
+        self.assertIn(self.payload2.decode(), result_strings)
+        self.assertIn('payload_hex', result[0])
 
     def test_file_not_found(self):
         result = extract_payloads(self.non_existent_path)
