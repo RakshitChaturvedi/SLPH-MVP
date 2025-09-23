@@ -2,11 +2,15 @@ import shutil
 import sys
 import os
 import uuid
+import json
 from pathlib import Path
+
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from pymongo import MongoClient
 from minio import Minio
 from minio.error import S3Error
+import pika
 
 from src.scripts.pcap_parser import extract_payloads
 from src.scripts.binary_parser import parse_binary
@@ -15,7 +19,7 @@ from src.scripts.binary_parser import parse_binary
 CURRENT_FILE_PATH = Path(__file__).resolve()
 PROJECT_ROOT = CURRENT_FILE_PATH.parent.parent.parent
 SRC_PATH = PROJECT_ROOT / "src"
-sys.path.insert(0, str(SRC_PATH))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 # --- Config ---
 TEMP_UPLOADS_PATH_STR = os.environ.get(
@@ -35,38 +39,71 @@ MINIO_BUCKET = "slph-artifacts"
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_DB_NAME = "slph_projects"
 
-app = FastAPI(title="SLPH Ingestion Service")
+# --- RabbitMQ Config ---
+RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
+CORRELATION_QUEUE = "correlation_task_queue"
 
-# Establish MongoDB Service Client Connection
-try:
-    mongo_client = MongoClient(MONGO_URI)
-    db = mongo_client[MONGO_DB_NAME]
-    projects_collection = db["projects"]
-    # test connection
-    mongo_client.server_info()
-    print("[+] Successfully connected to MongoDB.")
-except Exception as e:
-    print(f"[-] MongoDB connection failed: {e}", file=sys.stderr)
-    mongo_client = None
-    projects_collection = None
+app_state = {}
 
-# Establish MinIO Service Client Connection
-try:
-    minio_client = Minio(
-        MINIO_ENDPOINT,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=False # false for local dev (http)
-    )
-    # ensure storage bucket exists, if not, create it
-    found = minio_client.bucket_exists(MINIO_BUCKET)
-    if not found:
-        minio_client.make_bucket(MINIO_BUCKET)
-        print(f"[*] MinIO bucket '{MINIO_BUCKET}' created.")
-    print("[+] Successfully connected to MinIO.")
-except Exception as e:
-    print(f"[-] MinIO connection failed: {e}", file=sys.stderr)
-    minio_client=None
+# --- Lifespan Event Handler ---
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    print("[*] Server starting up...")
+    # Establish MongoDB Service Client Connection
+    try:
+        mongo_client = MongoClient(MONGO_URI)
+        mongo_client.server_info()
+
+        db = mongo_client[MONGO_DB_NAME]
+        app_state["projects_collection"] = db["projects"]
+
+        print("[+] Successfully connected to MongoDB.")
+    except Exception as e:
+        print(f"[-] MongoDB connection failed: {e}", file=sys.stderr)
+        app_state["projects_collection"] = None
+
+    # Establish MinIO Service Client Connection
+    try:
+        minio_client = Minio(
+            MINIO_ENDPOINT,
+            access_key=MINIO_ACCESS_KEY,
+            secret_key=MINIO_SECRET_KEY, 
+            secure=False
+        )
+        found = minio_client.bucket_exists(MINIO_BUCKET)
+        if not found: minio_client.make_bucket(MINIO_BUCKET)
+        app_state["minio_client"] = minio_client
+        print("[+] Successfully connected to MinIO.")
+    except Exception as e:
+        print(f"[-] MinIO connection failed: {e}", file=sys.stderr)
+        app_state["minio_client"] = None
+    
+    # Establish RabbitMQ Connection
+    try:
+        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
+        channel = connection.channel()
+        # durable=true -> queue survives restart
+        channel.queue_declare(queue=CORRELATION_QUEUE, durable=True) 
+        app_state["rabbitmq_channel"] = channel
+        app_state["rabbitmq_connection"] = connection
+        print("[+] Successfully connected to RabbitMQ.")
+    except Exception as e:
+        print(f"[-] RabbitMQ connection failed: {e}", file=sys.stderr)
+        app_state["rabbitmq_channel"] = None
+        app_state["rabbitmq_connection"] = None
+    
+    yield
+
+    # --- Shutdown ---
+    print("[*] Server shutting down...")
+    if app_state.get("rabbitmq_connection") and app_state["rabbitmq_connection"].is_open:
+        app_state["rabbitmq_connection"].close()
+        print("[*] RabbitMQ connection closed.")
+    if mongo_client and mongo_client.is_mongos:
+        mongo_client.close()
+        print("[*] MongoDB connection closed.")
+
+app = FastAPI(title="SLPH Ingestion Service", lifespan=lifespan)
 
 # Upload Route
 @app.post("/upload")
@@ -77,10 +114,14 @@ async def upload_file(file: UploadFile = File(...)):
         saves the parsed metadata to MongoDB
     """
 
-    if minio_client is None or projects_collection is None:
+    minio_client = app_state.get("minio_client")
+    projects_collection = app_state.get("projects_collection")
+    rabbitmq_channel = app_state.get("rabbitmq_channel")
+
+    if minio_client is None or projects_collection is None or rabbitmq_channel is None:
         raise HTTPException(
             status_code=503,
-            detail="Backend service not available. Check server logs."
+            detail="A backend service is not available."
         )
     
     # create a unique name for obj in MinIO to avoid name collisions.
@@ -127,7 +168,20 @@ async def upload_file(file: UploadFile = File(...)):
         project_id = str(insert_result.inserted_id)
         print(f"[+] Metadata saved to MongoDB with project ID: {project_id}")
 
-        return {"project_id": project_id, "status": "processed_and_stored"}
+        # Publish task message to the queue
+        message = {
+            "task": "CorrelationTask",
+            "project_id": project_id
+        }
+        rabbitmq_channel.basic_publish(
+            exchange='',
+            routing_key=CORRELATION_QUEUE,
+            body=json.dumps(message),
+            properties=pika.BasicProperties(delivery_mode=2)
+        )
+        print(f"[+] Published CorrelationTask for project ID: {project_id} to RabbitMQ.")
+
+        return {"project_id": project_id, "status": "processing_queued"}
 
     except S3Error as exc:
         print(f"[-] MinIO Error: {exc}", file=sys.stderr)

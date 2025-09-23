@@ -35,7 +35,20 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+  
+  rabbitmq:
+    image: rabbitmq:3.13-management # image with management ui included
+    container_name: slph_rabbitmq
+    ports:
+      - "5672:5672"     # main part for the applications to connect (AMQP)
+      - "15672:15672"   # port for the web-based management ui
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest 
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
 
 volumes:
   mongodb_data:
   minio_data:
+  rabbitmq_data:
