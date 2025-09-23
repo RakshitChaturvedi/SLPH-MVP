@@ -49,6 +49,7 @@ app_state = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("[*] Server starting up...")
+    
     # Establish MongoDB Service Client Connection
     try:
         mongo_client = MongoClient(MONGO_URI)
