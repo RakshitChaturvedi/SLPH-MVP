@@ -37,7 +37,7 @@ MONGO_DB_NAME = "slph_projects"
 
 app = FastAPI(title="SLPH Ingestion Service")
 
-# MongoDB Service Client Connection
+# Establish MongoDB Service Client Connection
 try:
     mongo_client = MongoClient(MONGO_URI)
     db = mongo_client[MONGO_DB_NAME]
@@ -50,7 +50,7 @@ except Exception as e:
     mongo_client = None
     projects_collection = None
 
-# MinIO Service Client Connection
+# Establish MinIO Service Client Connection
 try:
     minio_client = Minio(
         MINIO_ENDPOINT,
