@@ -1,0 +1,108 @@
+import unittest
+import sys
+import json
+from unittest.mock import patch, MagicMock
+from pathlib import Path
+from bson.objectid import ObjectId
+
+# --- Test Environment Setup ---
+# Ensure the project root is in the Python path to allow imports
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Import the specific function we want to test
+from services.correlation_service.main import process_task
+
+class TestCorrelationService(unittest.TestCase):
+    """
+    Unit test suite for the Correlation Service's main task processor.
+    This test mocks all external dependencies to test the orchestration
+    logic in isolation.
+    """
+
+    @patch('services.correlation_service.main.subprocess.run')
+    @patch('services.correlation_service.main.align_sequences')
+    @patch('services.correlation_service.main.cluster_messages')
+    @patch('services.correlation_service.main.extract_payloads')
+    @patch('services.correlation_service.main.minio_client')
+    @patch('services.correlation_service.main.db_collection')
+    def test_process_task_full_workflow(self, mock_db_collection, mock_minio_client,
+                                        mock_extract_payloads, mock_cluster_messages,
+                                        mock_align_sequences, mock_subprocess_run):
+        """
+        Tests the entire end-to-end logic of the process_task function,
+        verifying that all dependencies are called in the correct order with
+        the correct data, and that the final database update is correct.
+        """
+        # 1. --- ARRANGE ---
+        # Define all the fake data and mock return values.
+
+        # Fake project details
+        test_project_id = ObjectId()
+        fake_project_doc = {
+            "_id": test_project_id,
+            "minio_object_name": "test.pcap"
+        }
+        mock_db_collection.find_one.return_value = fake_project_doc
+
+        # Fake analysis script results
+        mock_extract_payloads.return_value = [{'payload_hex': 'aabbcc'}]
+        mock_cluster_messages.return_value = {0: [{'payload_hex': 'aabbcc'}]}
+        mock_align_sequences.return_value = [{'type': 'static', 'hex_value': 'aabbcc'}]
+
+        # Fake subprocess result (for Frida)
+        # We also need to mock the creation of the trace file
+        mock_subprocess_run.return_value = MagicMock(returncode=0)
+
+        # Create a mock for the RabbitMQ channel and method objects
+        mock_channel = MagicMock()
+        mock_method = MagicMock(delivery_tag=123)
+
+        # Prepare the incoming RabbitMQ message body
+        message_body = json.dumps({
+            "task": "CorrelationTask",
+            "project_id": str(test_project_id)
+        }).encode('utf-8')
+
+        # 2. --- ACT ---
+        # Call the actual function we want to test. This function will use
+        # all the mocks we configured above instead of the real services.
+        with patch('builtins.open', unittest.mock.mock_open(read_data="header\n0x1,1,0x2")):
+             process_task(mock_channel, mock_method, None, message_body)
+
+
+        # 3. --- ASSERT ---
+        # Verify that all our mocks were called correctly.
+
+        # Verify database lookups and updates
+        mock_db_collection.find_one.assert_called_once_with({"_id": test_project_id})
+        mock_db_collection.update_one.assert_called_once()
+        
+        # Deeply inspect the database update call to ensure the final model is correct
+        update_args = mock_db_collection.update_one.call_args
+        update_query = update_args[0][0]
+        update_data = update_args[0][1]['$set']
+
+        self.assertEqual(update_query, {"_id": test_project_id})
+        self.assertEqual(update_data['status'], 'analysis_complete')
+        self.assertIn('inferred_protocol_model', update_data)
+        self.assertEqual(update_data['inferred_protocol_model']['correlation_status'], 'placeholder_v1')
+        self.assertIn('network_model', update_data['inferred_protocol_model'])
+        self.assertIn('binary_model', update_data['inferred_protocol_model'])
+
+        # Verify MinIO was called
+        mock_minio_client.fget_object.assert_called_once()
+        
+        # Verify analysis scripts were called
+        mock_extract_payloads.assert_called_once()
+        mock_cluster_messages.assert_called_once()
+        mock_align_sequences.assert_called_once()
+
+        # Verify Frida was executed
+        mock_subprocess_run.assert_called_once()
+        
+        # Verify the task was acknowledged in the queue
+        mock_channel.basic_ack.assert_called_once_with(delivery_tag=mock_method.delivery_tag)
+
+if __name__ == '__main__':
+    unittest.main()
