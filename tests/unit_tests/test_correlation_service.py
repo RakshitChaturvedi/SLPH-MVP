@@ -47,7 +47,7 @@ class TestCorrelationService(unittest.TestCase):
 
         # Fake analysis script results
         mock_extract_payloads.return_value = [{'payload_hex': 'aabbcc'}]
-        mock_cluster_messages.return_value = {0: [{'payload_hex': 'aabbcc'}]}
+        mock_cluster_messages.return_value = {0: [{'payload_hex': 'aabbcc'}, {'payload_hex': 'aabbdd'}]}
         mock_align_sequences.return_value = [{'type': 'static', 'hex_value': 'aabbcc'}]
 
         # Fake subprocess result (for Frida)
