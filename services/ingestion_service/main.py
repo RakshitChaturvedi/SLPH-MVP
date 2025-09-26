@@ -108,7 +108,10 @@ app = FastAPI(title="SLPH Ingestion Service", lifespan=lifespan)
 
 # Upload Route
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_artifacts(
+    pcap_file: UploadFile = File(..., description="The network traffic capture file (.pcap or .pcapng)"),
+    binary_file: UploadFile = File(..., description="The corresponding binary executable that generated the traffic")
+):
     """ Accepts a file upload
         parses it
         stores the raw file in MinIO
@@ -126,44 +129,35 @@ async def upload_file(file: UploadFile = File(...)):
         )
     
     # create a unique name for obj in MinIO to avoid name collisions.
-    object_name = f"{uuid.uuid4()}-{file.filename}"
-    dest_path = TEMP_UPLOADS_DIR / file.filename
+    pcap_path = TEMP_UPLOADS_DIR / pcap_file.filename
+    binary_path = TEMP_UPLOADS_DIR / binary_file.filename
 
     try:
         # 1. Save uploaded file temporarily to disk
-        with dest_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        with pcap_path.open("wb") as buffer:
+            shutil.copyfileobj(pcap_file.file, buffer)
+        with binary_path.open("wb") as buffer:
+            shutil.copyfileobj(binary_file.file, buffer)
         
         # 2. Upload original, raw file to MinIO for perma storage
-        print(f"[*] Uploading '{file.filename}' to MinIO as '{object_name}'...")
-        minio_client.fput_object(
-            MINIO_BUCKET, object_name, str(dest_path)
-        )
-        print("[+] Upload to MinIO successful.")
+        pcap_object_name = f"{uuid.uuid4()}-{pcap_file.filename}"
+        binary_object_name = f"{uuid.uuid4()}-{binary_file.filename}"
 
-        # 3. Parse the local temporary file
-        print(f"[*] Parsing file: '{file.filename}'...")
-        if file.filename.endswith(('.pcap', '.pcapng')):
-            parsed_data = extract_payloads(str(dest_path))
-            analysis_type = "pcap"
-        else:
-            parsed_data = parse_binary(str(dest_path))
-            analysis_type = "binary"
+        print(f"[*] Uploading '{pcap_file.filename}' to MinIO as '{pcap_object_name}'...")
+        minio_client.fput_object(MINIO_BUCKET, pcap_object_name, str(pcap_path))
         
-        if not parsed_data:
-            raise HTTPException(
-                status_code=400,
-                detail="Unsupported or invalid file format."
-            )
+        print(f"[*] Uploading '{binary_file.filename}' to MinIO as '{binary_object_name}'...")
+        minio_client.fput_object(MINIO_BUCKET, binary_object_name, str(binary_path))
+        print("[+] Uploads to MinIO successful.")
 
         # 4. Save parsed metadata to MongoDB
         print("[*] Saving metadata to MongoDB...")
         project_document = {
-            "project_name": file.filename,
-            "minio_object_name": object_name,
+            "project_name": pcap_file.filename,
+            "pcap_object_name": pcap_object_name,
+            "binary_object_name": binary_object_name,
             "minio_bucket": MINIO_BUCKET,
-            "analysis_type": analysis_type,
-            "metadata": parsed_data
+            "status": "uploaded"
         }
         insert_result = projects_collection.insert_one(project_document)
         project_id = str(insert_result.inserted_id)
@@ -199,6 +193,6 @@ async def upload_file(file: UploadFile = File(...)):
         )
 
     finally:
-        if dest_path.exists():
-            dest_path.unlink()
-            print(f"[*] Cleaned up temporary file: '{dest_path}'")
+        if pcap_path.exists(): pcap_path.unlink()
+        if binary_path.exists(): binary_path.unlink()
+        print("[*] Cleaned up temporary files.")

@@ -24,7 +24,7 @@ def on_message(message, data):
                 log_file.flush()
 
         elif agent_message_type == 'log':
-            print(f"[*] Agent Log: {agent_payload}")
+            pass
 
         elif agent_message_type == 'error':
             print(f"[-] Agent Error: {agent_payload}", file=sys.stderr)
@@ -89,14 +89,12 @@ def main():
         script.load()
 
         device.resume(pid)
-        print("[+] Process resumed. Waiting for trace data... (Press Ctrl+C to stop)")
-        
+        print("---TRACER-READY---",flush=True)
         exit_event.wait()
 
-    except KeyboardInterrupt:
-        print("\n[*] Ctrl+C detected. Detaching from process...")
     except Exception as e:
-        print(f"\n[-] An unexpected error occurred: {e}", file=sys.stderr)
+        if not isinstance(e, KeyboardInterrupt):
+            print(f"\n[-] Tracer Error: {e}", file=sys.stderr)
     finally:
         if session and not session.is_detached:
             session.detach()
