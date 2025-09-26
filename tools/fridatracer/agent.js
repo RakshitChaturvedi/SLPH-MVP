@@ -24,68 +24,68 @@ function isMemoryRead(instruction) {
 }
 
 try {
-    send({ type: 'log', payload: 'Agent script started (Stalker version 8, Diagnostic).' });
+    send({ type: 'log', payload: 'Agent script started (Final Working Version).' });
 
-    const resolver = new ApiResolver('module');
-    const matches = resolver.enumerateMatches('exports:*!recv');
+    const recvPtr = DebugSymbol.fromName('recv').address;
+    const recvfromPtr = DebugSymbol.fromName('recvfrom').address;
+    const recvmsgPtr = DebugSymbol.fromName('recvmsg').address;
 
-    if (matches.length === 0) {
-        send({ type: 'error', payload: "ApiResolver could not find 'recv'." });
-    } else {
-        const recvPtr = matches[0].address;
-        send({ type: 'log', payload: `ApiResolver found 'recv' at: ${recvPtr}` });
+    const functionsToHook = {
+        'recv': recvPtr,
+        'recvfrom': recvfromPtr,
+        'recvmsg': recvmsgPtr,
+    };
 
-        Interceptor.attach(recvPtr, {
-            onEnter: function (args) {
-                const threadId = this.threadId;
-                let state = threadStates.get(threadId);
-
-                if (state && state.isStalking) {
-                    Stalker.unfollow(threadId);
-                    state.isStalking = false;
-                }
-                
-                state = {
-                    buffer: args[1],
-                    size: 0,
-                    isStalking: false
-                };
-                threadStates.set(threadId, state);
-            },
-            onLeave: function (retval) {
-                const bytesRead = retval.toInt32();
-                const threadId = this.threadId;
-                const state = threadStates.get(threadId);
-
-                if (bytesRead <= 0 || !state) {
-                    threadStates.delete(threadId);
-                    return;
-                }
-
-                state.size = bytesRead;
-                state.isStalking = true;
-                
-                Stalker.follow(threadId, {
-                    transform: function (iterator) {
-                        let instruction;
-                        while ((instruction = iterator.next()) !== null) {
-                            if (isMemoryRead(instruction)) {
-                                send({
-                                    type: 'mem_read_instruction',
-                                    payload: {
-                                        instr_address: instruction.address.toString(),
-                                        instr_string: instruction.toString()
-                                    }
-                                });
-                            }
-                            iterator.keep();
-                        }
+    let hook_count = 0;
+    for (const [funcName, funcPtr] of Object.entries(functionsToHook)) {
+        if (funcPtr && !funcPtr.isNull()) {
+            hook_count++;
+            Interceptor.attach(funcPtr, {
+                // In onEnter, we clean up any previous Stalker session for this thread.
+                onEnter: function(args) {
+                    const threadId = this.threadId;
+                    if (threadStates.has(threadId)) {
+                        Stalker.unfollow(threadId);
+                        threadStates.delete(threadId);
                     }
-                });
-            }
-        });
-        send({ type: 'log', payload: 'Interceptor attached successfully.' });
+                },
+                // In onLeave, we start the new Stalker session.
+                onLeave: function (retval) {
+                    const bytesRead = retval.toInt32();
+                    if (bytesRead > 0) {
+                        const threadId = this.threadId;
+                        threadStates.set(threadId, true); // Mark this thread as being stalked
+                        
+                        Stalker.follow(threadId, {
+                            transform: function (iterator) {
+                                let instruction;
+                                while ((instruction = iterator.next()) !== null) {
+                                    if (isMemoryRead(instruction)) {
+                                        send({
+                                            type: 'instruction',
+                                            payload: {
+                                                address: instruction.address.toString(),
+                                                mnemonic: instruction.mnemonic,
+                                                op_str: instruction.opStr
+                                            }
+                                        });
+                                    }
+                                    iterator.keep();
+                                }
+                            }
+                        });
+                    }
+                }
+            });
+        }
     }
+    
+    if (hook_count > 0) {
+        send({ type: 'log', payload: `[SUCCESS] Successfully attached to ${hook_count} recv* functions.` });
+    } else {
+        send({ type: 'error', payload: 'Could not find any recv* functions to hook.' });
+    }
+
 } catch (error) {
-    send({ type: 'error', payload: `A top-level error occurred: ${error.message}` });
+    send({ type: 'error', payload: `[FATAL ERROR] A top-level error occurred: ${error.message}` });
 }
