@@ -22,7 +22,7 @@ from src.scripts.pcap_parser import extract_payloads
 from src.scripts.message_clusterer import cluster_messages
 from src.scripts.sequence_aligner import align_sequences
 
-# ... (Configuration constants are unchanged) ...
+# ... (Configuration) ...
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
 CORRELATION_QUEUE = "correlation_task_queue"
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
@@ -66,7 +66,7 @@ def process_task(channel, method, properties, body):
         network_results = {"total_payloads": len(payloads), "analyzed_clusters": all_aligned_structures, "raw_payloads": payloads}
         print("[+] Network analysis complete.")
 
-        # --- Binary Analysis with STABLE Tracer ---
+        # --- Binary Analysis ---
         print("[*] Starting Binary Analysis Pipeline...")
         target_python_script = str(local_binary_path)
         trace_log_path = Path(temp_dir.name) / "trace.jsonl"
@@ -91,7 +91,6 @@ def process_task(channel, method, properties, body):
         tracer_process.terminate()
         tracer_process.wait(timeout=5)
 
-        # --- Parse STABLE Trace and Create Bag-of-Words ---
         instruction_mnemonics = []
         if trace_log_path.exists():
             with open(trace_log_path, 'r') as f:
@@ -125,7 +124,6 @@ def process_task(channel, method, properties, body):
         if temp_dir:
             temp_dir.cleanup()
 
-# ... (main worker loop is unchanged) ...
 def main():
     global mongo_client, minio_client, db_collection
     print("[*] Correlation service worker starting...")

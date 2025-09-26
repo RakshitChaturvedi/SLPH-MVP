@@ -5,9 +5,6 @@ import threading
 import json
 from pathlib import Path
 
-# Final version of the tracer controller.
-# This version correctly accepts the --output argument.
-
 log_file = None
 exit_event = threading.Event()
 
@@ -24,8 +21,6 @@ def on_message(message, data):
                 log_file.write(json.dumps(trace_data) + '\n')
                 log_file.flush()
         elif agent_message_type == 'log':
-            # We print agent logs to the service's console for debugging.
-            # In production, you might want to disable this.
             print(f"[*] Agent Log: {agent_payload}")
         elif agent_message_type == 'error':
             print(f"[-] Agent Error: {agent_payload}", file=sys.stderr)
@@ -36,7 +31,6 @@ def on_detached(reason):
     exit_event.set()
 
 def main():
-    # This parser correctly defines the arguments our Correlation Service is sending.
     parser = argparse.ArgumentParser(description="Launch a binary and trace memory-reading instructions.")
     parser.add_argument("-o", "--output", default="trace.jsonl", help="The file to save the trace log to.")
     parser.add_argument('target', nargs=argparse.REMAINDER, help='Path to the target binary and its arguments')
@@ -71,7 +65,6 @@ def main():
         script.load()
         device.resume(pid)
 
-        # Send the ready signal and wait for the parent process to terminate us.
         print("---TRACER-READY---", flush=True)
         exit_event.wait()
 
