@@ -37,9 +37,6 @@ def on_detached(reason):
     exit_event.set()
 
 def main():
-    # ... (main function is unchanged, it was already correct) ...
-    # This is a placeholder for brevity, your existing main() is fine.
-    # For clarity, I'm pasting the whole function again.
     parser = argparse.ArgumentParser(
         description="Launch a binary and trace memory reads from 'recv' calls.",
         usage='%(prog)s [options] /path/to/binary [binary args...]'

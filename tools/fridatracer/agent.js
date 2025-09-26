@@ -14,11 +14,6 @@
  * * 3. (Stalker Transform): The Stalker will analyze every block of code before
  * it is executed. We instruct it to insert a "callout" after every
  * instruction that reads from memory.
- * 
- * * 4. (Callout Function): This callout checks the memory address that was just
- * read. If that address falls within our network buffer, it sends a
- * detailed message back to our Python controller containing the byte offset,
- * the instruction mnemonic, and the address of the instruction.
  */
 'use strict';
 
@@ -75,9 +70,6 @@ try {
                         let instruction;
                         while ((instruction = iterator.next()) !== null) {
                             if (isMemoryRead(instruction)) {
-                                // --- SIMPLIFIED DIAGNOSTIC STEP ---
-                                // Instead of a complex callout, we just send the static
-                                // instruction details directly from here.
                                 send({
                                     type: 'mem_read_instruction',
                                     payload: {
