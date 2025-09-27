@@ -17,12 +17,11 @@ from minio import Minio
 CURRENT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = CURRENT_DIR.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-
 from src.scripts.pcap_parser import extract_payloads
 from src.scripts.message_clusterer import cluster_messages
 from src.scripts.sequence_aligner import align_sequences
 
-# ... (Configuration) ...
+# --- Configuration ---
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST", "localhost")
 CORRELATION_QUEUE = "correlation_task_queue"
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "localhost:9000")
@@ -31,8 +30,6 @@ MINIO_SECRET_KEY = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
 MINIO_BUCKET = "slph-artifacts"
 MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
 MONGO_DB_NAME = "slph_projects"
-
-# --- Global service clients ---
 mongo_client = None
 minio_client = None
 db_collection = None
@@ -66,7 +63,7 @@ def process_task(channel, method, properties, body):
         network_results = {"total_payloads": len(payloads), "analyzed_clusters": all_aligned_structures, "raw_payloads": payloads}
         print("[+] Network analysis complete.")
 
-        # --- Binary Analysis ---
+        # --- Binary Analysis with STABLE Tracer ---
         print("[*] Starting Binary Analysis Pipeline...")
         target_python_script = str(local_binary_path)
         trace_log_path = Path(temp_dir.name) / "trace.jsonl"
@@ -91,6 +88,7 @@ def process_task(channel, method, properties, body):
         tracer_process.terminate()
         tracer_process.wait(timeout=5)
 
+        # --- Parse STABLE Trace and Create Bag-of-Words ---
         instruction_mnemonics = []
         if trace_log_path.exists():
             with open(trace_log_path, 'r') as f:

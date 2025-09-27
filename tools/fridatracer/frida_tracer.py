@@ -14,14 +14,13 @@ def on_message(message, data):
         payload = message.get('payload', {})
         agent_message_type = payload.get('type')
         agent_payload = payload.get('payload')
-
         if agent_message_type == 'instruction':
             trace_data = agent_payload or {}
             if log_file:
                 log_file.write(json.dumps(trace_data) + '\n')
                 log_file.flush()
         elif agent_message_type == 'log':
-            print(f"[*] Agent Log: {agent_payload}")
+            pass
         elif agent_message_type == 'error':
             print(f"[-] Agent Error: {agent_payload}", file=sys.stderr)
     elif message.get('type') == 'error':
@@ -31,27 +30,16 @@ def on_detached(reason):
     exit_event.set()
 
 def main():
-    parser = argparse.ArgumentParser(description="Launch a binary and trace memory-reading instructions.")
-    parser.add_argument("-o", "--output", default="trace.jsonl", help="The file to save the trace log to.")
-    parser.add_argument('target', nargs=argparse.REMAINDER, help='Path to the target binary and its arguments')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-o", "--output", default="trace.jsonl")
+    parser.add_argument('target', nargs=argparse.REMAINDER)
     args = parser.parse_args()
-
-    if not args.target:
-        parser.print_help()
-        sys.exit(1)
-
+    if not args.target: sys.exit(1)
     target_cmd = args.target
-    if target_cmd and target_cmd[0] == '--':
-        target_cmd.pop(0)
-
+    if target_cmd and target_cmd[0] == '--': target_cmd.pop(0)
     agent_path = Path(__file__).resolve().parent / "agent.js"
-    if not agent_path.is_file():
-        print(f"Agent script not found at {agent_path}", file=sys.stderr)
-        sys.exit(1)
-        
     with open(agent_path, 'r', encoding='utf-8') as f:
         agent_code = f.read()
-
     global log_file
     session = None
     try:
@@ -64,10 +52,8 @@ def main():
         script.on('message', on_message)
         script.load()
         device.resume(pid)
-
         print("---TRACER-READY---", flush=True)
         exit_event.wait()
-
     except Exception as e:
         if not isinstance(e, KeyboardInterrupt):
              print(f"\n[-] Tracer Error: {e}", file=sys.stderr)

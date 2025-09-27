@@ -24,7 +24,7 @@ function isMemoryRead(instruction) {
 }
 
 try {
-    send({ type: 'log', payload: 'Agent script started (Final Working Version).' });
+    send({ type: 'log', payload: 'Agent script started.' });
 
     const recvPtr = DebugSymbol.fromName('recv').address;
     const recvfromPtr = DebugSymbol.fromName('recvfrom').address;
@@ -41,40 +41,73 @@ try {
         if (funcPtr && !funcPtr.isNull()) {
             hook_count++;
             Interceptor.attach(funcPtr, {
-                // In onEnter, we clean up any previous Stalker session for this thread.
+                // clean up any previous Stalker session for this thread.
                 onEnter: function(args) {
                     const threadId = this.threadId;
                     if (threadStates.has(threadId)) {
                         Stalker.unfollow(threadId);
                         threadStates.delete(threadId);
                     }
+                    let state = {
+                        buffer: ptr(0),
+                        size: 0,
+                        isStalking: false,
+                        msghdr_ptr: null
+                    };
+                    if (funcName === 'recvmsg') {
+                        state.msghdr_ptr = args[1]; // parse this in onLeave
+                    } else {
+                        state.buffer = args[1]; // direct buffer for recv/recfrom
+                    }
+                    threadStates.set(threadId, state);
                 },
-                // In onLeave, we start the new Stalker session.
+                // start the new Stalker session.
                 onLeave: function (retval) {
                     const bytesRead = retval.toInt32();
-                    if (bytesRead > 0) {
-                        const threadId = this.threadId;
-                        threadStates.set(threadId, true); // Mark this thread as being stalked
-                        
-                        Stalker.follow(threadId, {
-                            transform: function (iterator) {
-                                let instruction;
-                                while ((instruction = iterator.next()) !== null) {
-                                    if (isMemoryRead(instruction)) {
-                                        send({
-                                            type: 'instruction',
-                                            payload: {
-                                                address: instruction.address.toString(),
-                                                mnemonic: instruction.mnemonic,
-                                                op_str: instruction.opStr
-                                            }
-                                        });
-                                    }
-                                    iterator.keep();
-                                }
-                            }
-                        });
+                    const threadId = this.threadId;
+                    const state = threadStates.get(threadId);
+
+                    if (bytesRead <= 0 || !state) {
+                        return;
                     }
+
+                    if (state.msghdr_ptr) {
+                        for (let i = 0; i < 8; i++) {
+                            try {
+                                const iov_ptr = state.msghdr_ptr.add(i*8).readPointer();
+                                if (iov_ptr.toInt32() > 4096) {
+                                    const buffer_len = iov_ptr.add(Process.pointerSize).readU64();
+                                    if (buffer_len.toNumber() >= bytesRead) {
+                                        state.buffer = iov_ptr.readPointer();
+                                        break;
+                                    }
+                                }
+                            } catch (e) {/** Ignore */}
+                        }
+                    }
+
+                    if (state.buffer.isNull()){
+                        return;
+                    }
+
+                    state.size = bytesRead;
+
+                    Stalker.follow(threadId, {
+                        transform: function (iterator) {
+                            let instruction;
+                            while ((instruction = iterator.next()) !== null ) {
+                                if (isMemoryRead(instruction)) {
+                                    send({
+                                        type: 'instruction',
+                                        payload: {
+                                            mnemonic: instruction.mnemonic,
+                                        }
+                                    });
+                                }
+                                iterator.keep();
+                            }
+                        }
+                    })
                 }
             });
         }
