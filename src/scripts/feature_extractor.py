@@ -2,6 +2,7 @@ import math
 import numpy as np
 from collections import Counter
 from typing import List, Any, Dict
+from pprint import pprint
 
 def calculate_shannon_entropy(values: List[Any]) -> float:
     if not values:
@@ -67,7 +68,7 @@ def check_session_constancy(field_values: List[Any], session_ids: List[Any]) -> 
     return False
 
 def extract_value_based_features(field_instances: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """ Main orchestrator func to extract all value-vased features for a given field.
+    """ Extract all value-vased features for a given field.
 
         Args:
             field_instances: A list of dicts, where each dict represents an occurance
@@ -102,30 +103,51 @@ def extract_value_based_features(field_instances: List[Dict[str, Any]]) -> Dict[
         "correlation_with_length": calculate_correlation(numeric_values, message_lengths),
         "is_session_identifier": check_session_constancy(values, session_ids),
     }
-
     return features
+
+def extract_context_based_features(binary_model: Dict[str, Any]) -> Dict[str, Any]:
+    """ Extracts context-based features from binary analysis mode.
+        bag-of-words count of instruction mnemonics.
+    """
+    if not binary_model or "mnemonic_counts" not in binary_model:
+        return {}
+    return binary_model["mnemonic_counts"]
+
+def extract_features(
+        field_instances: List[Dict[str, Any]],
+        binary_model: Dict[str, Any]
+) -> Dict[str, Any]:
+    """ Main orchestrator that calls helper func to build complete feature set.
+    """
+    value_features = extract_value_based_features(field_instances)
+    context_features = extract_context_based_features(binary_model)
+
+    return {
+        "value_based": value_features,
+        "context-based": context_features
+    }
+
 
 if __name__ == '__main__':
     # example to demonstrate the functions.
-    print("---------------------------- Feature Extraction 1 Starting... ----------------------------")
+    print("---------------------------- Feature Extraction Starting... ----------------------------")
     print("[*] Demonstrating Feature Extractor...")
-    mock_instances = [
-        {'value': 100, 'message_length': 120, 'session_id': 'A'},
-        {'value': 100, 'message_length': 118, 'session_id': 'A'},
-        {'value': 250, 'message_length': 270, 'session_id': 'B'},
-        {'value': 250, 'message_length': 265, 'session_id': 'B'},
-        {'value': 300, 'message_length': 315, 'session_id': 'C'},
+    mock_field_instances = [
+        {'value': '00a1', 'message_length': 120, 'session_id': 'A'},
+        {'value': '00a1', 'message_length': 122, 'session_id': 'A'},
+        {'value': '00f3', 'message_length': 270, 'session_id': 'B'},
     ]
+    mock_binary_model = {
+        "mnemonic_counts": {
+            "mov": 1023,
+            "cmp": 181,
+            "lea": 484,
+        }
+    }
+    extracted_features = extract_features(mock_field_instances, mock_binary_model)
 
-    extracted_features = extract_value_based_features(mock_instances)
+    print("[+] Final combined extracted features: ")
+    pprint(extracted_features)
 
-    print("[+] Mock Field Instances: ")
-    for inst in mock_instances:
-        print(f"  {inst}")
-    
-    print("[+] Extracted Features: ")
-    for key, value in extracted_features.items():
-        print(f"    - {key}: {value}")
-
-    print("---------------------------- Feature Extraction 1 Complete. ----------------------------")
+    print("---------------------------- Feature Extraction Complete. ----------------------------")
 
